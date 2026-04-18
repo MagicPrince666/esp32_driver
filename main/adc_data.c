@@ -1,5 +1,5 @@
 #include <string.h>
-#include "rocker.h"
+#include "adc_data.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -33,7 +33,7 @@ rocker_callback_t reflash_function_; // 接收回调
 static uint32_t adc_center_values[ADC_CHANNEL_NUM];  // 存储各通道的中位值
 static bool adc_calibrated = false;                   // ADC是否已校准
 
-static adc_channel_t channel[5] = {ADC_CHANNEL_0, ADC_CHANNEL_3, ADC_CHANNEL_4, ADC_CHANNEL_6, ADC_CHANNEL_7};
+static adc_channel_t channel[2] = {ADC_CHANNEL_0, ADC_CHANNEL_3};
 
 static void adc_read_task(void *param);
 
@@ -117,22 +117,10 @@ void adc_read_task(void *param)
                     if (chan_num < SOC_ADC_CHANNEL_NUM(EXAMPLE_ADC_UNIT)) {
                         // ESP_LOGI(TAG, "Unit: %s, Channel: %" PRIu32 ", Value: %" PRIx32, unit, chan_num, data);
                         if (chan_num == 0) {
-                            if (adc_raw_[3] != data) {
-                                adc_raw_[3] = data;
-                            }
-                        } else if (chan_num == 3) {
-                            if (adc_raw_[2] != data) {
-                                adc_raw_[2] = data;
-                            }
-                        } else if (chan_num == 4) {
-                            if (adc_raw_[4] != data) {
-                                adc_raw_[4] = data;
-                            }
-                        } else if (chan_num == 6) {
                             if (adc_raw_[0] != data) {
                                 adc_raw_[0] = data;
                             }
-                        }  else if (chan_num == 7) {
+                        } else if (chan_num == 3) {
                             if (adc_raw_[1] != data) {
                                 adc_raw_[1] = data;
                             }
@@ -142,14 +130,11 @@ void adc_read_task(void *param)
                     }
                 }
                 if (reflash_function_) {
-                    reflash_function_(adc_raw_, 5);
+                    reflash_function_(adc_raw_, 2);
                 } else {
-                    ESP_LOGI(TAG, "lx = %"PRIx32"\tly = %"PRIx32"\trx = %"PRIx32"\try = %"PRIx32"\tpwoer = %"PRIx32, 
+                    ESP_LOGI(TAG, "adc0 = %"PRIx32"\tadc1 = %"PRIx32, 
                         adc_raw_[0],
-                        adc_raw_[1],
-                        adc_raw_[2],
-                        adc_raw_[3],
-                        adc_raw_[4]);
+                        adc_raw_[1]);
                 }
                 /**
                  * Because printing is slow, so every time you call `ulTaskNotifyTake`, it will immediately return.
@@ -168,7 +153,7 @@ void adc_read_task(void *param)
     ESP_ERROR_CHECK(adc_continuous_deinit(handle_));
 }
 
-void RockerInit() {
+void AdcInit() {
     handle_ = NULL;
     memset(adc_raw_, 0, sizeof(adc_raw_));
     continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle_);
@@ -182,91 +167,4 @@ uint32_t *GetAdcData() {
 void SetRockerCallback(rocker_callback_t handler)
 {
     reflash_function_ = handler;
-}
-
-/**
- * @brief 校准ADC中位值
- * 
- * 该函数在系统启动时调用，通过采集一段时间内的ADC值，
- * 计算每个通道的平均值作为中位值。这样可以消除硬件差异，
- * 确保摇杆在中心位置时输出接近0的值。
- * 注意：通道5(索引为4)是电池电压检测通道，不参与校准。
- */
-void CalibrateAdcCenter()
-{
-    const int sample_count = 100;  // 每个通道采集的样本数
-    const int delay_ms = 10;       // 采样间隔(毫秒)
-    uint32_t sum[ADC_CHANNEL_NUM] = {0};
-    
-    ESP_LOGI(TAG, "开始ADC中位值校准...");
-    
-    // 采集每个通道的多个样本
-    for (int i = 0; i < sample_count; i++) {
-        // 获取当前ADC值
-        uint32_t *current_adc = GetAdcData();
-        
-        // 累加前4个通道的值(不包含通道5)
-        for (int j = 0; j < ADC_CHANNEL_NUM - 1; j++) {
-            sum[j] += current_adc[j];
-        }
-        
-        // 延迟一段时间再采集下一个样本
-        vTaskDelay(delay_ms / portTICK_PERIOD_MS);
-    }
-    
-    // 计算前4个通道的平均值作为中位值
-    for (int i = 0; i < ADC_CHANNEL_NUM - 1; i++) {
-        adc_center_values[i] = sum[i] / sample_count;
-        ESP_LOGI(TAG, "通道%d的中位值: %lu", i, adc_center_values[i]);
-    }
-    
-    // 通道5(索引为4)是电池电压检测通道，不参与校准
-    adc_center_values[4] = 0;
-    
-    adc_calibrated = true;
-    ESP_LOGI(TAG, "ADC中位值校准完成");
-}
-
-/**
- * @brief 获取所有通道的中位值
- * 
- * @return uint32_t* 指向中位值数组的指针
- */
-uint32_t *GetAdcCenterValues()
-{
-    return adc_center_values;
-}
-
-/**
- * @brief 获取指定通道的中位值
- * 
- * @param channel 通道索引
- * @return uint32_t 指定通道的中位值
- */
-uint32_t GetAdcCenterValue(uint8_t channel)
-{
-    if (channel >= ADC_CHANNEL_NUM) {
-        ESP_LOGW(TAG, "无效的通道索引: %d", channel);
-        return 0;
-    }
-    
-    return adc_center_values[channel];
-}
-
-/**
- * @brief 设置指定通道的中位值
- * 
- * @param channel 通道索引
- * @param value 要设置的中位值
- */
-void SetAdcCenterValue(uint8_t channel, uint32_t value)
-{
-    if (channel >= ADC_CHANNEL_NUM) {
-        ESP_LOGW(TAG, "无效的通道索引: %d", channel);
-        return;
-    }
-    
-    adc_center_values[channel] = value;
-    adc_calibrated = true;
-    ESP_LOGI(TAG, "通道%d的中位值设置为: %lu", channel, value);
 }

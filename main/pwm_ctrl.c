@@ -17,6 +17,9 @@ static mcpwm_cmpr_handle_t comparator_;
 #define SERVO_TIMEBASE_RESOLUTION_HZ 1000000  // 1MHz, 1us per tick
 #define SERVO_TIMEBASE_PERIOD        20000    // 20000 ticks, 20ms
 
+#define MOTO_PWM_IN1             GPIO_NUM_22
+#define MOTO_PWM_IN2             GPIO_NUM_23
+
 static inline uint32_t example_angle_to_compare(int angle)
 {
     return (angle - SERVO_MIN_DEGREE) * (SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) / (SERVO_MAX_DEGREE - SERVO_MIN_DEGREE) + SERVO_MIN_PULSEWIDTH_US;

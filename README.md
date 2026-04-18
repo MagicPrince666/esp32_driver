@@ -8,4 +8,5 @@ idf.py set-target esp32
 idf.py build
 idf.py -p PORT flash monitor
 idf.py -p /dev/tty.usbserial-0001 flash
+idf.py -p /dev/tty.usbserial-0001 monitor
 ```

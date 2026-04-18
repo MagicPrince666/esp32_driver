@@ -6,26 +6,20 @@
  * @date 2024-04-04
  * @copyright 个人版权所有 Copyright (c) 2023
  */
-#ifndef __ROCKER_H__
-#define __ROCKER_H__
+#ifndef __ADC_DATA_H__
+#define __ADC_DATA_H__
 
 #include "esp_adc/adc_continuous.h"
 
 #define ADC_MAX_VALUE    4095    // 12bit ADC
-#define ADC_CHANNEL_NUM   5       // ADC通道数量
+#define ADC_CHANNEL_NUM   2       // ADC通道数量
 
 typedef void (*rocker_callback_t)(const uint32_t*, const uint32_t);
 
-void RockerInit();
+void AdcInit();
 
 uint32_t *GetAdcData();
 
 void SetRockerCallback(rocker_callback_t handler);
-
-// ADC中位值校准相关函数
-void CalibrateAdcCenter();
-uint32_t *GetAdcCenterValues();
-uint32_t GetAdcCenterValue(uint8_t channel);
-void SetAdcCenterValue(uint8_t channel, uint32_t value);
 
 #endif
