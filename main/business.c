@@ -1,6 +1,7 @@
 #include "business.h"
 #include "adc_data.h"
 #include "servo_ctrl.h"
+#include "moto_ctrl.h"
 #include "softap_sta.h"
 #include "battery.h"
 #include "select.h"
@@ -9,8 +10,6 @@
 #include <sys/param.h>
 #include <string.h>
 
-// const uint16_t adc_range[5] = {4095, 4095, 3821, 3740, 4095}; // 遥控1参数
-const uint16_t adc_range[5] = {4095, 3780, 3970, 3640, 4095}; // 遥控2参数
 struct RemoteState {
     bool lose_signal;   // 失控标识
 
@@ -39,11 +38,10 @@ struct RemoteState {
 
 static const char *TAG = "peripherals";
 static int sock = -1;  // UDP socket
-static struct sockaddr_in dest_addr;
 static bool udp_initialized = false;
 void ShowAdcData(const uint32_t* adcs, const uint32_t channal);
 
-static int udp_init(const char *ip, uint16_t port)
+static int udp_server_init(uint16_t port)
 {
     int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s < 0) {
@@ -51,26 +49,50 @@ static int udp_init(const char *ip, uint16_t port)
         return -1;
     }
 
-    dest_addr.sin_addr.s_addr = inet_addr(ip);
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(port);
+    struct sockaddr_in local_addr;
+    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_port = htons(port);
 
-    ESP_LOGI(TAG, "UDP initialized, target: %s:%d", ip, port);
+    int err = bind(s, (struct sockaddr *)&local_addr, sizeof(local_addr));
+    if (err < 0) {
+        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
+        close(s);
+        return -1;
+    }
+
+    ESP_LOGI(TAG, "UDP server initialized, listening on port %d", port);
     return s;
 }
 
-// 发送RemoteState数据
-static void send_remote_state(const struct RemoteState *state)
+static void udp_receive_callback(void)
 {
-    if (!udp_initialized || sock < 0) {
+    struct RemoteState state;
+    struct sockaddr_in source_addr;
+    socklen_t socklen = sizeof(source_addr);
+
+    int len = recvfrom(sock, &state, sizeof(struct RemoteState), 0,
+                      (struct sockaddr *)&source_addr, &socklen);
+    if (len < 0) {
+        ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
         return;
     }
 
-    int err = sendto(sock, state, sizeof(struct RemoteState), 0, 
-                    (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-    if (err < 0) {
-        // ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+    if (len != sizeof(struct RemoteState)) {
+        ESP_LOGW(TAG, "Received data size mismatch: %d vs %d", len, sizeof(struct RemoteState));
+        return;
     }
+
+    // 控制电机：左摇杆Y轴，范围-1到1，映射到-100到100
+    int motor_speed = (int)(state.adsry * 100.0f);
+    SetSpeed(motor_speed);
+
+    // 控制舵机：右摇杆X轴，范围-1到1，映射到-90到90度
+    int servo_angle = (int)(state.adsrx * 90.0f);
+    SetServo1(servo_angle);
+
+    // 可选：打印调试信息
+    // ESP_LOGI(TAG, "Motor: %d, Servo: %d", motor_speed, servo_angle);
 }
 
 void ShowAdcData(const uint32_t* adcs, const uint32_t channal)
@@ -83,64 +105,28 @@ void ShowAdcData(const uint32_t* adcs, const uint32_t channal)
     // 更新百分比显示
     int len = snprintf(str, 32, "%3d%%", percent);
     str[len] = 0;
-    if (percent != last_percent) {
+    if (abs((int)percent - (int)last_percent) > 3) {
         last_percent = percent;
         printf("battery:%s \n", str);
     }
 }
 
+/**
+ * 显示设备的MAC地址和IP地址信息
+ * @param event 指向ip_event_ap_staipassigned_t结构体的指针，包含MAC和IP信息
+ * @param connect 连接状态标志位，虽然当前函数中未使用，但可能用于扩展功能
+ */
 void ShowIp(ip_event_ap_staipassigned_t* event, bool connect)
 {
-    char str[64];
+    char str[64];  // 用于存储格式化后的字符串
+    // 格式化MAC地址并打印
     int len = snprintf(str, sizeof(str), MACSTR, MAC2STR(event->mac));
-    str[len] = 0;
+    str[len] = 0;  // 确保字符串正确终止
     printf("MAC: %s \n", str);
+    // 格式化IP地址并打印
     len = snprintf(str, sizeof(str), IPSTR, IP2STR(&event->ip));
-    str[len] = 0;
+    str[len] = 0;  // 确保字符串正确终止
     printf("IP: %s \n", str);
-
-    if (connect) {
-        if (sock > 0) {
-            return;
-        }
-        sock = udp_init("192.168.34.168", 5555);
-        if (sock >= 0) {
-            udp_initialized = true;
-        }
-    } else {
-        if (sock >= 0) {
-            close(sock);
-            udp_initialized = false;
-        }
-    }
-}
-
-void ShowIpAndConnect(ip_event_ap_staipassigned_t* event, bool connect)
-{
-    char str[64];
-    int len = snprintf(str, sizeof(str), MACSTR, MAC2STR(event->mac));
-    str[len] = 0;
-    printf("MAC: %s \n", str);
-    len = snprintf(str, sizeof(str), IPSTR, IP2STR(&event->ip));
-    str[len] = 0;
-    printf("IP: %s \n", str);
-    if (connect) {
-        // 初始化UDP连接到对端的5555端口
-        if (sock > 0) {
-            return;
-        }
-        char ip_str[16];
-        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip));
-        sock = udp_init(ip_str, 5555);
-        if (sock >= 0) {
-            udp_initialized = true;
-        }
-    } else {
-        if (sock >= 0) {
-            close(sock);
-            udp_initialized = false;
-        }
-    }
 }
 
 void InitAll(void)
@@ -154,9 +140,19 @@ void InitAll(void)
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
     SoftApStaInit();
-    SetIpCallback(ShowIpAndConnect);
     SetStaIpCallback(ShowIp);
     SetUpSta("Remote", "12345678");
+    // 建立UDP服务，端口号5555
     // SetUpAp("Remote", "12345678");
-    PwmCtrlInit();
+    ServoCtrlInit();
+    MotoCtrlInit();
+
+    // 初始化UDP服务器
+    sock = udp_server_init(5555);
+    if (sock >= 0) {
+        udp_initialized = true;
+        if (SelectAddFd(sock, udp_receive_callback) != 0) {
+            ESP_LOGE(TAG, "Failed to add UDP socket to select");
+        }
+    }
 }

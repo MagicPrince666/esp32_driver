@@ -8,6 +8,9 @@
 #include <sys/lock.h>
 #include <sys/param.h>
 
+#define IIC_SDA             GPIO_NUM_26
+#define IIC_SCL             GPIO_NUM_27
+
 #ifdef __cplusplus
 extern "C" {
 #endif

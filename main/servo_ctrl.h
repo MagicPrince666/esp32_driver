@@ -1,10 +1,17 @@
-#ifndef __PWM_CTRL_H__
-#define __PWM_CTRL_H__
+#ifndef __SERVO_CTRL_H__
+#define __SERVO_CTRL_H__
 
-#include "driver/mcpwm_prelude.h"
+#include "driver/ledc.h"
 #include "driver/gpio.h"
 
-void PwmCtrlInit();
-void SetAngle(int angle);
+void ServoCtrlInit(void);
+void SetAngle(int angle); // alias for channel 1
+void SetServoAngle(int channel, int angle);
+void SetServo1(int angle);
+void SetServo2(int angle);
+void SetServo3(int angle);
+void SetServo4(int angle);
+void SetServo5(int angle);
+void SetServo6(int angle);
 
 #endif

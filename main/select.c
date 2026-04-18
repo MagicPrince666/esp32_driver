@@ -48,6 +48,10 @@ int AddFd(int fd, select_callback_t handler) {
     return 0;
 }
 
+int SelectAddFd(int fd, select_callback_t handler) {
+    return AddFd(fd, handler);
+}
+
 // 删除链表中的指定 fd 节点
 void DeleteFd(int fd) {
     callback_node_t *curr = callback_list_;

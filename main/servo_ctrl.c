@@ -1,88 +1,106 @@
 #include "servo_ctrl.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "esp_log.h"
-#include "driver/mcpwm_prelude.h"
+#include "driver/ledc.h"
 
-static const char *TAG = "pwm";
-static mcpwm_cmpr_handle_t comparator_;
+static const char *TAG = "servo";
 
-// Please consult the datasheet of your servo before changing the following parameters
-#define SERVO_MIN_PULSEWIDTH_US 500  // Minimum pulse width in microsecond
+#define SERVO_MIN_PULSEWIDTH_US 500   // Minimum pulse width in microsecond
 #define SERVO_MAX_PULSEWIDTH_US 2500  // Maximum pulse width in microsecond
 #define SERVO_MIN_DEGREE        -90   // Minimum angle
 #define SERVO_MAX_DEGREE        90    // Maximum angle
+#define SERVO_PERIOD_US         20000 // 20ms period for standard servos
+#define SERVO_LEDC_FREQ_HZ      50
+#define SERVO_LEDC_RESOLUTION   LEDC_TIMER_16_BIT
 
-#define SERVO1_PULSE_GPIO             GPIO_NUM_21        // GPIO connects to the PWM signal line
-#define SERVO2_PULSE_GPIO             GPIO_NUM_19        // GPIO connects to the PWM signal line
-#define SERVO3_PULSE_GPIO             GPIO_NUM_18        // GPIO connects to the PWM signal line
-#define SERVO4_PULSE_GPIO             GPIO_NUM_5        // GPIO connects to the PWM signal line
-#define SERVO5_PULSE_GPIO             GPIO_NUM_17        // GPIO connects to the PWM signal line
-#define SERVO6_PULSE_GPIO             GPIO_NUM_16        // GPIO connects to the PWM signal line
-#define SERVO_TIMEBASE_RESOLUTION_HZ 1000000  // 1MHz, 1us per tick
-#define SERVO_TIMEBASE_PERIOD        20000    // 20000 ticks, 20ms
+static const gpio_num_t servo_gpio[6] = {
+    GPIO_NUM_21,
+    GPIO_NUM_19,
+    GPIO_NUM_18,
+    GPIO_NUM_5,
+    GPIO_NUM_17,
+    GPIO_NUM_16,
+};
 
-#define MOTO_PWM_IN1             GPIO_NUM_22
-#define MOTO_PWM_IN2             GPIO_NUM_23
+static const ledc_channel_t servo_channel[6] = {
+    LEDC_CHANNEL_0,
+    LEDC_CHANNEL_1,
+    LEDC_CHANNEL_2,
+    LEDC_CHANNEL_3,
+    LEDC_CHANNEL_4,
+    LEDC_CHANNEL_5,
+};
 
-static inline uint32_t example_angle_to_compare(int angle)
+static inline uint32_t angle_to_duty(int angle)
 {
-    return (angle - SERVO_MIN_DEGREE) * (SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) / (SERVO_MAX_DEGREE - SERVO_MIN_DEGREE) + SERVO_MIN_PULSEWIDTH_US;
+    if (angle < SERVO_MIN_DEGREE) {
+        angle = SERVO_MIN_DEGREE;
+    } else if (angle > SERVO_MAX_DEGREE) {
+        angle = SERVO_MAX_DEGREE;
+    }
+
+    uint32_t pulse_us = SERVO_MIN_PULSEWIDTH_US + (uint32_t)(angle - SERVO_MIN_DEGREE) * (SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) / (SERVO_MAX_DEGREE - SERVO_MIN_DEGREE);
+    uint32_t max_duty = (1U << LEDC_TIMER_16_BIT) - 1;
+    return (uint32_t)((uint64_t)pulse_us * max_duty / SERVO_PERIOD_US);
 }
 
-void PwmCtrlInit()
+static void set_servo_duty(int channel_index, int angle)
 {
-    ESP_LOGI(TAG, "Create timer and operator");
-    comparator_ = NULL;
-    mcpwm_timer_handle_t timer = NULL;
-    mcpwm_timer_config_t timer_config = {
-        .group_id = 0,
-        .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
-        .resolution_hz = SERVO_TIMEBASE_RESOLUTION_HZ,
-        .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
-        .period_ticks = SERVO_TIMEBASE_PERIOD,
+    if (channel_index < 0 || channel_index >= 6) {
+        ESP_LOGW(TAG, "Invalid servo channel: %d", channel_index + 1);
+        return;
+    }
+
+    uint32_t duty = angle_to_duty(angle);
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_HIGH_SPEED_MODE, servo_channel[channel_index], duty));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_HIGH_SPEED_MODE, servo_channel[channel_index]));
+}
+
+void ServoCtrlInit(void)
+{
+    ESP_LOGI(TAG, "Initializing 6-channel servo PWM");
+
+    ledc_timer_config_t timer_conf = {
+        .speed_mode = LEDC_HIGH_SPEED_MODE,
+        .timer_num = LEDC_TIMER_0,
+        .duty_resolution = SERVO_LEDC_RESOLUTION,
+        .freq_hz = SERVO_LEDC_FREQ_HZ,
+        .clk_cfg = LEDC_AUTO_CLK,
     };
-    ESP_ERROR_CHECK(mcpwm_new_timer(&timer_config, &timer));
+    ESP_ERROR_CHECK(ledc_timer_config(&timer_conf));
 
-    mcpwm_oper_handle_t oper = NULL;
-    mcpwm_operator_config_t operator_config;
-    operator_config.group_id = 0; // operator must be in the same group to the timer
-
-    ESP_ERROR_CHECK(mcpwm_new_operator(&operator_config, &oper));
-
-    ESP_LOGI(TAG, "Connect timer and operator");
-    ESP_ERROR_CHECK(mcpwm_operator_connect_timer(oper, timer));
-
-    ESP_LOGI(TAG, "Create comparator and generator from the operator");
-    mcpwm_comparator_config_t comparator_config;
-    comparator_config.flags.update_cmp_on_tez = true;
-    ESP_ERROR_CHECK(mcpwm_new_comparator(oper, &comparator_config, &comparator_));
-
-    mcpwm_gen_handle_t generator = NULL;
-    mcpwm_generator_config_t generator_config;
-    generator_config.gen_gpio_num = SERVO1_PULSE_GPIO;
-
-    ESP_ERROR_CHECK(mcpwm_new_generator(oper, &generator_config, &generator));
-
-    // set the initial compare value, so that the servo will spin to the center position
-    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator_, example_angle_to_compare(0)));
-
-    ESP_LOGI(TAG, "Set generator action on timer and compare event");
-    // go high on counter empty
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(generator,
-                                                              MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH)));
-    // go low on compare threshold
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(generator,
-                                                                MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator_, MCPWM_GEN_ACTION_LOW)));
-
-    ESP_LOGI(TAG, "Enable and start timer");
-    ESP_ERROR_CHECK(mcpwm_timer_enable(timer));
-    ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
-    SetAngle(90);
+    for (int i = 0; i < 6; i++) {
+        ledc_channel_config_t ch_conf = {
+            .gpio_num = servo_gpio[i],
+            .speed_mode = LEDC_HIGH_SPEED_MODE,
+            .channel = servo_channel[i],
+            .intr_type = LEDC_INTR_DISABLE,
+            .timer_sel = LEDC_TIMER_0,
+            .duty = 0,
+            .hpoint = 0,
+        };
+        ESP_ERROR_CHECK(ledc_channel_config(&ch_conf));
+        set_servo_duty(i, 0);
+    }
 }
 
 void SetAngle(int angle)
 {
-    mcpwm_comparator_set_compare_value(comparator_, example_angle_to_compare(angle));
+    SetServo1(angle);
 }
+
+void SetServoAngle(int channel, int angle)
+{
+    if (channel < 1 || channel > 6) {
+        ESP_LOGW(TAG, "Invalid servo channel: %d", channel);
+        return;
+    }
+    set_servo_duty(channel - 1, angle);
+}
+
+void SetServo1(int angle) { set_servo_duty(0, angle); }
+void SetServo2(int angle) { set_servo_duty(1, angle); }
+void SetServo3(int angle) { set_servo_duty(2, angle); }
+void SetServo4(int angle) { set_servo_duty(3, angle); }
+void SetServo5(int angle) { set_servo_duty(4, angle); }
+void SetServo6(int angle) { set_servo_duty(5, angle); }
 

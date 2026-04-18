@@ -6,5 +6,6 @@ idf_component_register(SRCS
     serial.c
     select.c
     business.c
+    moto_ctrl.c
     softap_sta.c
     INCLUDE_DIRS ".")
