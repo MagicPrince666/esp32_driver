@@ -83,12 +83,12 @@ static void udp_receive_callback(void)
         return;
     }
 
-    // 控制电机：左摇杆Y轴，范围-1到1，映射到-100到100
-    int motor_speed = (int)(state.adsry * 100.0f);
+    // 控制电机：左摇杆Y轴，范围0-1，0.5为停止，映射到-100到100
+    int motor_speed = (int)((0.5f - state.adsry) * 200.0f);
     SetSpeed(motor_speed);
 
-    // 控制舵机：右摇杆X轴，范围-1到1，映射到-90到90度
-    int servo_angle = (int)(state.adsrx * 90.0f);
+    // 控制舵机：右摇杆X轴，范围0-1，0对应90度，1对应-90度
+    int servo_angle = (int)((0.5f - state.adsrx) * 180.0f);
     SetServo1(servo_angle);
 
     // 可选：打印调试信息
