@@ -1,4 +1,4 @@
-#include "pwm_ctrl.h"
+#include "servo_ctrl.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -13,7 +13,12 @@ static mcpwm_cmpr_handle_t comparator_;
 #define SERVO_MIN_DEGREE        -90   // Minimum angle
 #define SERVO_MAX_DEGREE        90    // Maximum angle
 
-#define SERVO_PULSE_GPIO             GPIO_NUM_19        // GPIO connects to the PWM signal line
+#define SERVO1_PULSE_GPIO             GPIO_NUM_21        // GPIO connects to the PWM signal line
+#define SERVO2_PULSE_GPIO             GPIO_NUM_19        // GPIO connects to the PWM signal line
+#define SERVO3_PULSE_GPIO             GPIO_NUM_18        // GPIO connects to the PWM signal line
+#define SERVO4_PULSE_GPIO             GPIO_NUM_5        // GPIO connects to the PWM signal line
+#define SERVO5_PULSE_GPIO             GPIO_NUM_17        // GPIO connects to the PWM signal line
+#define SERVO6_PULSE_GPIO             GPIO_NUM_16        // GPIO connects to the PWM signal line
 #define SERVO_TIMEBASE_RESOLUTION_HZ 1000000  // 1MHz, 1us per tick
 #define SERVO_TIMEBASE_PERIOD        20000    // 20000 ticks, 20ms
 
@@ -55,7 +60,7 @@ void PwmCtrlInit()
 
     mcpwm_gen_handle_t generator = NULL;
     mcpwm_generator_config_t generator_config;
-    generator_config.gen_gpio_num = SERVO_PULSE_GPIO;
+    generator_config.gen_gpio_num = SERVO1_PULSE_GPIO;
 
     ESP_ERROR_CHECK(mcpwm_new_generator(oper, &generator_config, &generator));
 
