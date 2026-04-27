@@ -9,6 +9,9 @@
 #include "esp_log.h"
 #include <sys/param.h>
 #include <string.h>
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 struct RemoteState {
     bool lose_signal;   // 失控标识
@@ -39,6 +42,8 @@ struct RemoteState {
 static const char *TAG = "peripherals";
 static int sock = -1;  // UDP socket
 static bool udp_initialized = false;
+static int64_t last_udp_time = 0;  // 上次接收UDP消息的时间戳
+static const int64_t TIMEOUT_MS = 1000;  // 超时时间：1秒
 void ShowAdcData(const uint32_t* adcs, const uint32_t channal);
 
 static int udp_server_init(uint16_t port)
@@ -71,10 +76,20 @@ static void udp_receive_callback(void)
     struct sockaddr_in source_addr;
     socklen_t socklen = sizeof(source_addr);
 
+    // 检查是否超时
+    int64_t current_time = esp_timer_get_time() / 1000;  // 转换为毫秒
+    if (last_udp_time > 0 && (current_time - last_udp_time) > TIMEOUT_MS) {
+        ESP_LOGW(TAG, "UDP timeout detected, stopping motors and centering servo");
+        SetSpeed(0);  // 停止电机
+        SetServo1(0);  // 舵机居中
+    }
+
     int len = recvfrom(sock, &state, sizeof(struct RemoteState), 0,
                       (struct sockaddr *)&source_addr, &socklen);
     if (len < 0) {
         ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
+        SetSpeed(0);  // 停止电机
+        SetServo1(0);  // 舵机居中
         return;
     }
 
@@ -83,12 +98,15 @@ static void udp_receive_callback(void)
         return;
     }
 
-    // 控制电机：左摇杆Y轴，范围0-1，0.5为停止，映射到-100到100
-    int motor_speed = (int)((0.5f - state.adsry) * 200.0f);
+    // 更新最后接收时间
+    last_udp_time = esp_timer_get_time() / 1000;  // 转换为毫秒
+
+    // 控制电机：左摇杆Y轴，范围-1到1，0为停止，映射到-100到100
+    int motor_speed = (int)((state.adsry) * 100.0f);
     SetSpeed(motor_speed);
 
-    // 控制舵机：右摇杆X轴，范围0-1，0对应90度，1对应-90度
-    int servo_angle = (int)((0.5f - state.adsrx) * 180.0f);
+    // 控制舵机：右摇杆X轴，范围-1-1，0对应90度，1对应-90度
+    int servo_angle = (int)((state.adsrx) * 90.0f);
     SetServo1(servo_angle);
 
     // 可选：打印调试信息
@@ -127,6 +145,13 @@ void ShowIp(ip_event_ap_staipassigned_t* event, bool connect)
     len = snprintf(str, sizeof(str), IPSTR, IP2STR(&event->ip));
     str[len] = 0;  // 确保字符串正确终止
     printf("IP: %s \n", str);
+    if (connect) {
+        printf("Connected to Wi-Fi network\n");
+    } else {
+        printf("Disconnected from Wi-Fi network\n");
+        SetSpeed(0);  // 停止电机
+        SetServo1(0);  // 舵机居中
+    }
 }
 
 void InitAll(void)
@@ -151,7 +176,7 @@ void InitAll(void)
     sock = udp_server_init(5555);
     if (sock >= 0) {
         udp_initialized = true;
-        if (SelectAddFd(sock, udp_receive_callback) != 0) {
+        if (SelectAddFd(sock, udp_receive_callback, NULL) != 0) {
             ESP_LOGE(TAG, "Failed to add UDP socket to select");
         }
     }

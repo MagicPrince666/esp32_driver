@@ -77,7 +77,7 @@ void SerialRealease()
 
 void AsyncRecv()
 {
-    SelectAddFd(ctx.uart_fd_, AsyncRecvData);
+    SelectAddFd(ctx.uart_fd_, AsyncRecvData, NULL);
 }
 
 int SendData(const char *data, const int lenght)

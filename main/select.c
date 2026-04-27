@@ -23,13 +23,14 @@ static void list_init(void) {
 }
 
 // 添加节点到链表（头插法）
-int AddFd(int fd, select_callback_t handler) {
+int AddFd(int fd, select_callback_t handler, select_timeout_callback_t timeout_handler) {
     // 查找是否已存在该 fd
     callback_node_t *curr = callback_list_;
     while (curr) {
         if (curr->fd == fd) {
             // 已存在则更新回调
             curr->callback = handler;
+            curr->timeout_callback = timeout_handler;
             return 0;
         }
         curr = curr->next;
@@ -48,8 +49,8 @@ int AddFd(int fd, select_callback_t handler) {
     return 0;
 }
 
-int SelectAddFd(int fd, select_callback_t handler) {
-    return AddFd(fd, handler);
+int SelectAddFd(int fd, select_callback_t handler, select_timeout_callback_t timeout_handler) {
+    return AddFd(fd, handler, timeout_handler);
 }
 
 // 删除链表中的指定 fd 节点
@@ -134,6 +135,14 @@ void select_task(void *arg)
             break;
         } else if (s == 0) {
             // ESP_LOGI(TAG, "Timeout has been reached and nothing has been received");
+            // 遍历链表检查并调用回调
+            node = callback_list_;
+            while (node) {
+                if (node->timeout_callback) {
+                    node->timeout_callback();
+                }
+                node = node->next;
+            }
         } else {
             // 遍历链表检查并调用回调
             node = callback_list_;
